@@ -8,6 +8,7 @@ import torchvision.transforms as T
 from ultralytics import YOLO
 from torchvision import transforms
 import torch.nn as nn
+import time
 
 class CNN_Model(nn.Module):
     def __init__(self):
@@ -75,54 +76,72 @@ def get_human_boxes(prediction, treshold = 0.6):
     result = []
 
     for i in range(size):
+        if i>9:
+            break
         if(conf[i] > treshold and cls[i] == 0):
             result.append(xyxy[i])
 
     return result
 
 def show_camera_stream():
+
+    def restart_camera():
+        """Properly release and restart the camera."""
+        print("Restarting camera...")
+        stream.release()
+        time.sleep(1)  # Wait before restarting
+        return cv2.VideoCapture(0)
+    
     stream = cv2.VideoCapture(0)
+    stream.set(cv2.CAP_PROP_FPS, 15)
+    stream.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    stream.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
     if not stream.isOpened():
         print('Camera not found :(')
         exit()
-
+    
     transform = T.ToTensor()
+    last_success_time = time.time()
     while(True):
-
+        
         ret, BGR_frame = stream.read()
-        frame = cv2.cvtColor(BGR_frame, cv2.COLOR_BGR2RGB)
-        pil_frame = Image.fromarray(frame)
-        frame_tensor = transform(frame).unsqueeze(0).to(device)
-        prediction = model(frame_tensor)
+        if ret:
+            last_success_time = time.time()
+            frame = cv2.cvtColor(BGR_frame, cv2.COLOR_BGR2RGB)
+            pil_frame = Image.fromarray(frame)
+            frame_tensor = transform(frame).unsqueeze(0).to(device)
+            prediction = model(frame_tensor, verbose=False)
+        
+            boxes = get_human_boxes(prediction)
+        
+            for box in boxes:
+                box[0] = max(box[0]-40, 0)
+                box[1] = max(box[1]-40, 0)
+                box[2] = min(box[2]+40, 640)
+                box[3] = min(box[3]+40, 480)
+                cv2.rectangle(BGR_frame, (box[0], box[1]), (box[2], box[3]), (255, 0, 0), 2)
+                
+                isolated_object_frame = BGR_frame[box[1]:box[3], box[0]:box[2]]
+                RGB_frame = cv2.cvtColor(isolated_object_frame, cv2.COLOR_BGR2RGB)
+                frame_img = Image.fromarray(RGB_frame)
+                frame_tensor = transform_for_age(frame_img).unsqueeze(0).to(device)
+                result = int(network(frame_tensor).cpu().detach().numpy().item())
+                cv2.putText(BGR_frame, f"Age: {result}", (box[0], box[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
+                #cv2.imshow('Isolated object', isolated_object_frame)
+            cv2.imshow('Webcam', BGR_frame)
+        else:
+            print('Camera Read Failed!')
 
-        boxes = get_human_boxes(prediction)
-
-        for box in boxes:
-            box[0] = max(box[0]-40, 0)
-            box[1] = max(box[1]-40, 0)
-            box[2] = min(box[2]+40, 640)
-            box[3] = min(box[3]+40, 480)
-            cv2.rectangle(BGR_frame, (box[0], box[1]), (box[2], box[3]), (255, 0, 0), 2)
-
-            isolated_object_frame = BGR_frame[box[1]:box[3], box[0]:box[2]]
-            RGB_frame = cv2.cvtColor(isolated_object_frame, cv2.COLOR_BGR2RGB)
-            frame_img = Image.fromarray(RGB_frame)
-            frame_tensor = transform_for_age(frame_img).unsqueeze(0).to(device)
-            result = int(network(frame_tensor).cpu().detach().numpy().item())
-            cv2.putText(BGR_frame, f"Age: {result}", (box[0], box[1]), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (36,255,12), 2)
-            #cv2.imshow('Isolated object', isolated_object_frame)
-
-        if not ret:
-            print('No more stream')
-            break
-
+        if time.time() - last_success_time > 1.5:
+            stream = restart_camera()
+            last_success_time = time.time()  # Reset timer
+                
         if cv2.waitKey(1) == ord('q'):
             break
-
-        cv2.imshow('Webcam', BGR_frame)
-
+                
+    
     stream.release()
     cv2.destroyAllWindows()
-
 
 show_camera_stream()
