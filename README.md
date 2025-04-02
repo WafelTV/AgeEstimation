@@ -30,6 +30,6 @@ python YOLO_age_detection.py
 - Adjust thresholds if detection results aren't optimal.
 - The CNN model should be trained separately and saved as `best_model.pth`.
 
-## Author
+## Authors
 Jakub Romanowski  
 Kacper Trznadel
